@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handwriting Studio</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1f2a44; --muted:#6b7280; --line:#e5e1d8; --accent:#2d4ea8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:20px 28px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:2px 0 0; color:var(--muted); }
+  main { display:grid; grid-template-columns: 380px 1fr; gap:20px; padding:20px 28px; align-items:start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding:16px; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .step { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:12px; margin-right:6px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:8px 0 3px; }
+  input[type=text], select, textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font:inherit; background:#fff; color:inherit; }
+  textarea { min-height:340px; font-family: ui-monospace, Consolas, monospace; font-size:13px; resize:vertical; }
+  input[type=range] { width:100%; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button, .btn { display:inline-block; border:0; border-radius:6px; padding:9px 14px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; text-decoration:none; }
+  button.secondary, .btn.secondary { background:#eef1f8; color:var(--accent); }
+  button:disabled { opacity:.5; cursor:wait; }
+  .muted { color:var(--muted); font-size:13px; }
+  .err { color:#b42318; font-size:13px; white-space:pre-wrap; }
+  .ok { color:#067647; font-size:13px; }
+  #sheet { max-width:100%; border:1px solid var(--line); border-radius:6px; margin-top:10px; display:none; }
+  #pages img { width:100%; max-width:820px; display:block; margin:0 auto 18px; box-shadow:0 2px 14px rgba(0,0,0,.12); border-radius:2px; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Handwriting Studio</h1>
+  <p>Turn your handwriting into a font, then write anything (including GPT maths) on paper in your hand.</p>
+</header>
+<main>
+  <section>
+    <div class="card">
+      <h2><span class="step">1</span>Get the template</h2>
+      <p class="muted">Print it, fill every box with a dark pen, then photograph or scan each page flat. Two copies = two variants of every letter, so the result looks less repetitive.</p>
+      <div class="toolbar">
+        <a class="btn" href="/api/template.pdf?copies=1">Template (1 copy)</a>
+        <a class="btn secondary" href="/api/template.pdf?copies=2">2 copies</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">2</span>Upload your filled sheets</h2>
+      <label>Name for this handwriting</label>
+      <input type="text" id="pname" placeholder="e.g. riya">
+      <label>Photos / scans (JPG, PNG or PDF, any order)</label>
+      <input type="file" id="pfiles" multiple accept="image/*,.pdf">
+      <label><input type="checkbox" id="pappend"> Add to an existing profile with this name (more variants)</label>
+      <div class="toolbar" style="margin-top:10px"><button id="upload">Create handwriting</button></div>
+      <div id="upmsg"></div>
+    </div>
+
+    <div class="card">
+      <h2><span class="step">3</span>Handwriting &amp; pen</h2>
+      <label>Handwriting profile</label>
+      <select id="profile"></select>
+      <img id="sheet" alt="extracted glyphs">
+      <div class="toolbar" style="margin-top:10px">
+        <a class="btn secondary" id="fontlink" href="#">Download .ttf font</a>
+        <button class="secondary" id="del">Delete</button>
+      </div>
+      <div class="row">
+        <div><label>Ink</label>
+          <select id="ink"><option>blue</option><option>black</option><option>red</option><option>green</option><option>pencil</option></select></div>
+        <div><label>Paper</label>
+          <select id="paper"><option>ruled</option><option>plain</option><option>grid</option></select></div>
+      </div>
+      <label>Size <span id="size_v"></span></label><input type="range" id="size" min="0.6" max="1.5" step="0.05" value="1">
+      <label>Messiness <span id="messiness_v"></span></label><input type="range" id="messiness" min="0" max="2.5" step="0.1" value="1">
+      <label>Pen thickness <span id="weight_v"></span></label><input type="range" id="weight" min="0.5" max="2.5" step="0.1" value="1">
+      <label>Line spacing <span id="line_spacing_v"></span></label><input type="range" id="line_spacing" min="54" max="100" step="2" value="72">
+      <div class="row">
+        <div><label>Display equations</label>
+          <select id="display_align"><option>left</option><option>center</option></select></div>
+        <div><label>Random seed</label><input type="text" id="seed" value="7"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2><span class="step">4</span>Paste text (markdown + LaTeX works, e.g. a ChatGPT answer)</h2>
+      <textarea id="text"></textarea>
+      <div class="toolbar" style="margin-top:10px">
+        <button id="go">Write it by hand</button>
+        <a class="btn secondary" id="pdf" style="display:none" download>Download PDF</a>
+        <span id="rmsg" class="muted"></span>
+      </div>
+    </div>
+    <div id="pages"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const SAMPLE = `### Solve  $2x^2 - 7x + 3 = 0$
+
+**Step 1:** Use the quadratic formula:
+
+\\[
+x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}
+\\]
+
+Here \\( a = 2 \\), \\( b = -7 \\), \\( c = 3 \\), so
+
+\\[
+x = \\frac{7 \\pm \\sqrt{25}}{4} = \\frac{7 \\pm 5}{4}
+\\]
+
+- \\( x = 3 \\)
+- \\( x = \\frac{1}{2} \\)
+
+\\[
+\\boxed{x = 3 \\text{ or } x = \\tfrac12}
+\\]`;
+$("text").value = SAMPLE;
+
+["size","messiness","weight","line_spacing"].forEach(k => {
+  const upd = () => $(k + "_v").textContent = $(k).value;
+  $(k).addEventListener("input", upd); upd();
+});
+
+async function loadProfiles(select) {
+  const list = await (await fetch("/api/profiles")).json();
+  const sel = $("profile");
+  sel.innerHTML = list.map(p =>
+    `<option value="${p.id}">${p.name} (${p.glyphs} chars${p.missing ? ", " + p.missing.length + " missing" : ""})</option>`).join("");
+  if (select) sel.value = select;
+  showProfile();
+}
+function showProfile() {
+  const id = $("profile").value;
+  if (!id) { $("sheet").style.display = "none"; return; }
+  $("sheet").src = `/api/profiles/${id}/sheet.png?t=${Date.now()}`;
+  $("sheet").style.display = "block";
+  $("fontlink").href = `/api/profiles/${id}/font.ttf`;
+}
+$("profile").addEventListener("change", showProfile);
+
+$("upload").onclick = async () => {
+  const fd = new FormData();
+  fd.append("name", $("pname").value);
+  if ($("pappend").checked) fd.append("append", "1");
+  for (const f of $("pfiles").files) fd.append("files", f);
+  $("upload").disabled = true; $("upmsg").className = "muted"; $("upmsg").textContent = "Reading your handwriting...";
+  try {
+    const r = await fetch("/api/profiles", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error);
+    let msg = `Got ${j.glyph_count} characters from ${j.pages.length} page(s).`;
+    if (j.missing) msg += `\nNot written yet (a fallback font is used): ${j.missing}`;
+    if (j.errors.length) msg += "\n" + j.errors.join("\n");
+    $("upmsg").className = j.errors.length ? "err" : "ok"; $("upmsg").textContent = msg;
+    loadProfiles(j.id);
+  } catch (e) { $("upmsg").className = "err"; $("upmsg").textContent = e.message; }
+  $("upload").disabled = false;
+};
+
+$("del").onclick = async () => {
+  const id = $("profile").value;
+  if (!id || !confirm(`Delete handwriting "${id}"?`)) return;
+  await fetch(`/api/profiles/${id}`, { method: "DELETE" });
+  loadProfiles();
+};
+
+$("go").onclick = async () => {
+  const options = {};
+  ["ink","paper","size","messiness","weight","line_spacing","display_align","seed"].forEach(k => options[k] = $(k).value);
+  $("go").disabled = true; $("rmsg").textContent = "Writing...";
+  try {
+    const r = await fetch("/api/render", { method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ profile: $("profile").value, text: $("text").value, options }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "render failed");
+    $("pages").innerHTML = j.pages.map(u => `<img src="${u}" alt="page">`).join("");
+    $("pdf").href = j.pdf; $("pdf").style.display = "inline-block";
+    $("rmsg").textContent = `${j.pages.length} page(s)`;
+  } catch (e) { $("rmsg").textContent = e.message; }
+  $("go").disabled = false;
+};
+
+loadProfiles();
+</script>
+</body>
+</html>
