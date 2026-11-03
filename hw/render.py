@@ -51,6 +51,7 @@ class Options:
     seed: int = 7
     cursive: bool = False         # join lowercase letters with connecting strokes
     consistency: float = 0.7      # 0 = glyphs exactly as written, 1 = fully evened out
+    lines: float = 1.0            # how freehand ruled lines look (tables, axes, boxes); 0 = clean
     heading_ink: str = ""         # "" = same as ink
     math_ink: str = ""
     page_w: int = C.PAGE_W
@@ -402,6 +403,7 @@ class PageWriter:
         self.L = opt.line_spacing
         em = self.L * 0.5 * opt.size
         self.ctx = Ctx(profile, em, self.rng, opt.messiness, opt.cursive)
+        self.ctx.line_m = opt.lines
         self.em = em
         self.W, self.H = opt.page_w, opt.page_h
         self.first_rule = int(self.L * 3.4)
@@ -438,7 +440,11 @@ class PageWriter:
     def stroke(self, pts, color=None, width=1.0):
         prev = self.canvas.color
         self.canvas.color = color
-        self.canvas.stroke(self.ctx.wobble_line(pts), self.ctx.stroke * width)
+        if len(pts) == 2 and np.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) > self.em * 1.5:
+            for line, wf, inten in self.ctx.hand_rule(pts[0], pts[1]):
+                self.canvas.stroke(line, self.ctx.stroke * width * wf, inten)
+        else:
+            self.canvas.stroke(self.ctx.wobble_line(pts), self.ctx.stroke * width)
         self.canvas.color = prev
 
     # -- horizontal drawing with hand drift -----------------------------

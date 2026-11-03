@@ -122,6 +122,52 @@ class Ctx:
         out.append(pts[-1])
         return out
 
+    def hand_rule(self, p, q, split=True, ends=(True, True)):
+        """A long straight line drawn freehand, as a list of strokes
+        [(points, width_factor, intensity)].
+
+        Compared with `wobble_line` it adds what makes ruled lines look human:
+        a slight tilt and sag that grow with length, slow wander, ends that
+        over/undershoot the corner, a small landing hook, a pen lift on long
+        lines, and stroke-to-stroke pressure differences. `line_m` (the
+        "hand-drawn lines" option) scales all of it; 0 gives clean lines."""
+        r, em, m = self.rng, self.em, getattr(self, "line_m", 1.0)
+        p, q = np.asarray(p, np.float64), np.asarray(q, np.float64)
+        L = float(np.hypot(*(q - p)))
+        if L < 1 or m <= 0:
+            return [([p, q], 1.0, 0.95)]
+        d = (q - p) / L
+        nrm = np.array([-d[1], d[0]])
+
+        # long lines: the pen is lifted once and the line restarted slightly overlapping
+        if split and L > em * 16 and r.random() < min(0.55, 0.4 * m):
+            t = r.uniform(0.38, 0.62)
+            mid = p + (q - p) * t
+            lap = em * r.uniform(0.08, 0.3)
+            jog = nrm * r.normal(0, self.stroke * 0.35 * m)
+            return (self.hand_rule(p, mid + d * lap * 0.5, split=False, ends=(ends[0], False))
+                    + self.hand_rule(mid - d * lap * 0.5 + jog, q, split=False, ends=(False, ends[1])))
+
+        def end_shift(on):
+            # positive = overshoot past the corner, negative = stop short of it
+            return float(np.clip(r.normal(0.06, 0.07) * em * m, -0.1 * em, 0.22 * em)) if on else 0.0
+        p = p - d * end_shift(ends[0])
+        q = q + d * end_shift(ends[1])
+        L = float(np.hypot(*(q - p)))
+
+        n = max(8, int(L / 5))
+        t = np.linspace(0, 1, n)
+        tilt = r.normal(0, min(0.0028 * L, 0.1 * em)) * m             # end drifts off the ideal line
+        sag = r.normal(0, min(0.0035 * L, 0.12 * em)) * m             # gentle bow
+        off = tilt * (t - 0.5) * 2 + sag * np.sin(np.pi * t)
+        for _ in range(2):                                            # slow wander of the hand
+            wl = r.uniform(110, 360)
+            off += self.stroke * r.uniform(0.15, 0.4) * m * np.sin(2 * np.pi * t * L / wl + r.uniform(0, 6.3))
+        hook = r.normal(0, self.stroke * 0.45) * m                     # pen landing
+        off += hook * np.exp(-t * L / (em * 0.25))
+        pts = p + np.outer(t * L, d) + np.outer(off, nrm)
+        return [(pts, float(r.uniform(0.9, 1.1)), float(r.uniform(0.82, 0.97)))]
+
 
 # ---------------------------------------------------------------------------
 # boxes

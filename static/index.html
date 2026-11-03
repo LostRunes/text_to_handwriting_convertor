@@ -92,6 +92,9 @@
       </div>
       <label>Handwriting consistency <span id="consistency_v"></span></label>
       <input type="range" id="consistency" min="0" max="1" step="0.05" value="0.7">
+      <label>Hand-drawn lines <span id="lines_v"></span></label>
+      <input type="range" id="lines" min="0" max="2" step="0.1" value="1">
+      <div class="help">How freehand table borders, graph axes and diagram boxes look. 0 = ruler-straight.</div>
       <div class="help">Evens out letter sizes, slant and pen weight. 0 = exactly as you wrote them.</div>
       <label><input type="checkbox" id="cursive"> Join letters (cursive handwriting)</label>
     </div>
@@ -159,7 +162,7 @@ x = \\frac{7 \\pm \\sqrt{25}}{4} = \\frac{7 \\pm 5}{4}
 \\]`;
 $("text").value = SAMPLE;
 
-["size","messiness","weight","line_spacing","consistency"].forEach(k => {
+["size","messiness","weight","line_spacing","consistency","lines"].forEach(k => {
   const upd = () => $(k + "_v").textContent = $(k).value;
   $(k).addEventListener("input", upd); upd();
 });
@@ -214,7 +217,7 @@ $("del").onclick = async () => {
 
 $("go").onclick = async () => {
   const options = {};
-  ["ink","paper","size","messiness","weight","line_spacing","display_align","seed","consistency","heading_ink","math_ink"].forEach(k => options[k] = $(k).value);
+  ["ink","paper","size","messiness","weight","line_spacing","display_align","seed","consistency","lines","heading_ink","math_ink"].forEach(k => options[k] = $(k).value);
   options.cursive = $("cursive").checked;
   $("go").disabled = true; $("rmsg").textContent = "Writing...";
   try {

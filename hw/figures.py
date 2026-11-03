@@ -57,6 +57,10 @@ class Pen:
         self.ops.append(op)
 
     def line(self, p, q, width=1.0, amp=None, color=None, intensity=0.95):
+        if amp is None and np.hypot(q[0] - p[0], q[1] - p[1]) > self.ctx.em * 1.5:
+            for pts, wf, inten in self.ctx.hand_rule(p, q):          # axes, box sides, bars
+                self._add(pts, width * wf, min(intensity, inten), color)
+            return
         self._add(self.ctx.wobble_line([p, q], amp=amp), width, intensity, color)
 
     def poly(self, pts, width=1.0, amp=None, color=None, closed=False, intensity=0.95):
