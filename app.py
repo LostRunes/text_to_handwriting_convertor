@@ -1,9 +1,17 @@
-"""Web UI:  python app.py  ->  http://127.0.0.1:5000"""
+"""Web UI:  python app.py  ->  http://127.0.0.1:5000
+
+Hosting settings (environment variables):
+  PROTECTED_PROFILES  comma-separated profiles nobody can delete or overwrite
+                      through the website (default: "y1,demo")
+  ALLOW_UPLOADS       "0" to stop visitors from creating new handwriting profiles
+  MAX_TEXT_CHARS      longest text accepted for one render (default 40000)
+"""
 
 import io
 import os
 import re
 import shutil
+import time
 import uuid
 
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
@@ -18,6 +26,24 @@ from hw.template import save_template_pdf
 OUTPUT = os.path.join(ROOT, "output")
 app = Flask(__name__, static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024
+
+PROTECTED = {p.strip().lower() for p in os.environ.get("PROTECTED_PROFILES", "y1,demo").split(",") if p.strip()}
+ALLOW_UPLOADS = os.environ.get("ALLOW_UPLOADS", "1") != "0"
+MAX_TEXT = int(os.environ.get("MAX_TEXT_CHARS", 40000))
+OUTPUT_TTL = 3600          # rendered pages are kept for an hour
+
+
+def cleanup_output():
+    if not os.path.isdir(OUTPUT):
+        return
+    cutoff = time.time() - OUTPUT_TTL
+    for job in os.listdir(OUTPUT):
+        d = os.path.join(OUTPUT, job)
+        try:
+            if os.path.getmtime(d) < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def slug(name):
@@ -49,14 +75,24 @@ def template():
 
 @app.get("/api/profiles")
 def profiles():
-    return jsonify([Profile(os.path.join(PROFILES, n)).summary() | {"id": n} for n in list_profiles(PROFILES)])
+    return jsonify([Profile(os.path.join(PROFILES, n)).summary() | {"id": n, "locked": n in PROTECTED}
+                    for n in list_profiles(PROFILES)])
+
+
+@app.get("/api/config")
+def config():
+    return jsonify(allow_uploads=ALLOW_UPLOADS)
 
 
 @app.post("/api/profiles")
 def create_profile():
+    if not ALLOW_UPLOADS:
+        return jsonify(error="Uploading new handwriting is turned off on this site"), 403
     name = slug(request.form.get("name"))
     if not name:
         return jsonify(error="Give the handwriting a name"), 400
+    if name in PROTECTED:
+        return jsonify(error=f'"{name}" is protected - pick another name'), 403
     files = request.files.getlist("files")
     if not files:
         return jsonify(error="Upload at least one photo or scan"), 400
@@ -73,7 +109,10 @@ def create_profile():
 
 @app.delete("/api/profiles/<name>")
 def delete_profile(name):
-    shutil.rmtree(profile_dir(name))
+    d = profile_dir(name)
+    if slug(name) in PROTECTED:
+        return jsonify(error=f'"{slug(name)}" is protected and can\'t be deleted from the website'), 403
+    shutil.rmtree(d)
     return jsonify(ok=True)
 
 
@@ -100,8 +139,12 @@ def render():
     text = data.get("text", "")
     if not text.strip():
         return jsonify(error="Paste some text first"), 400
+    if len(text) > MAX_TEXT:
+        return jsonify(error=f"Text is too long (limit {MAX_TEXT} characters) - split it into parts"), 400
+    cleanup_output()
     prof = Profile(profile_dir(data.get("profile")))
-    pages = render_text(text, prof, Options.from_dict(data.get("options")))
+    notes = []
+    pages = render_text(text, prof, Options.from_dict(data.get("options")), notes)
     job = uuid.uuid4().hex[:12]
     d = os.path.join(OUTPUT, job)
     os.makedirs(d)
@@ -111,7 +154,7 @@ def render():
         p.save(os.path.join(d, fn), optimize=True)
         names.append(f"/output/{job}/{fn}")
     save_pdf(pages, os.path.join(d, "handwritten.pdf"))
-    return jsonify(pages=names, pdf=f"/output/{job}/handwritten.pdf")
+    return jsonify(pages=names, pdf=f"/output/{job}/handwritten.pdf", notes=notes)
 
 
 @app.get("/output/<job>/<fn>")
@@ -125,4 +168,4 @@ if __name__ == "__main__":
     if not list_profiles(PROFILES):
         print("building demo handwriting profile...")
         build_demo()
-    app.run(debug=False, port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=False, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))

@@ -18,11 +18,20 @@ from .mathparse import REL_CHARS
 # canvas + context
 # ---------------------------------------------------------------------------
 class Canvas:
-    """Ink density (0..1) for one page."""
+    """Ink density (0..1) for one page, one layer per pen colour.
+    `color` selects the layer that drawing goes to (None = the default ink)."""
 
     def __init__(self, w, h):
         self.w, self.h = w, h
-        self.a = np.zeros((h, w), np.float32)
+        self.layers = {None: np.zeros((h, w), np.float32)}
+        self.color = None
+
+    @property
+    def a(self):
+        layer = self.layers.get(self.color)
+        if layer is None:
+            layer = self.layers[self.color] = np.zeros((self.h, self.w), np.float32)
+        return layer
 
     def paste(self, alpha, x, y, intensity=1.0):
         x, y = int(round(x)), int(round(y))
@@ -49,8 +58,9 @@ class Canvas:
 class Ctx:
     """Shared rendering state: profile, scale, randomness, pen settings."""
 
-    def __init__(self, profile, em, rng, messiness=1.0):
+    def __init__(self, profile, em, rng, messiness=1.0, cursive=False):
         self.profile = profile
+        self.cursive = cursive
         self.em = em                          # cap height on the page, px, at size 1
         self.k = em / profile.em              # page px per template px
         self.rng = rng
@@ -148,6 +158,26 @@ class Bullet(Box):
         cv.stroke(pts, max(self.ctx.stroke, r * 1.4))
 
 
+class Colored(Box):
+    """Draw `inner` with a different pen colour."""
+
+    def __init__(self, inner, color):
+        self.inner, self.color = inner, color
+        self.w, self.a, self.d = inner.w, inner.a, inner.d
+
+    def draw(self, cv, x, y):
+        prev = cv.color
+        cv.color = self.color
+        try:
+            self.inner.draw(cv, x, y)
+        finally:
+            cv.color = prev
+
+
+def colored(box, color):
+    return Colored(box, color) if color else box
+
+
 class Phantom(Box):
     def __init__(self, inner):
         self.w, self.a, self.d = inner.w, inner.a, inner.d
@@ -155,7 +185,7 @@ class Phantom(Box):
 
 class GlyphBox(Box):
     def __init__(self, ctx, ch, size=1.0, bold=False, fit=None, center_on=None, scale=1.0,
-                 tight=False):
+                 tight=False, joined=False):
         """fit=(top, bottom): stretch the glyph vertically to that span (delimiters).
         center_on: y (relative to baseline) the glyph's middle is moved to."""
         self.ctx, self.ch, self.bold = ctx, ch, bold
@@ -177,7 +207,11 @@ class GlyphBox(Box):
         self.rot = rng.normal(0, 1.4 * m) if fit is None else rng.normal(0, 0.6 * m)
         self.dy = rng.normal(0, 0.022 * m) * em
         self.intensity = float(np.clip(rng.normal(0.93, 0.04), 0.8, 1.0))
-        self.sb = em * (0.03 if tight else 0.065) * (1 + rng.uniform(-0.3, 0.3) * m)
+        if joined:                            # cursive: letters close together, steadier slant
+            self.rot *= 0.5
+            self.sb = em * 0.015 * (1 + rng.uniform(-0.3, 0.3) * m)
+        else:
+            self.sb = em * (0.03 if tight else 0.065) * (1 + rng.uniform(-0.3, 0.3) * m)
         self.ink_w = g.w * sx
         self.top = g.top * sy
         if fit is not None:
@@ -188,6 +222,16 @@ class GlyphBox(Box):
         self.w = self.ink_w + 2 * self.sb
         self.a = max(0.0, -self.top)
         self.d = max(0.0, self.top + g.h * sy)
+
+    def page_point(self, u, v, x, y):
+        """Where glyph pixel (u, v) ends up on the page when drawn at (x, y)."""
+        g = self.g
+        cx = x + self.sb + self.ink_w / 2
+        cy = y + self.top + g.h * self.sy / 2 + self.dy
+        dx = (u - g.w / 2) * self.sx * self.jit
+        dy = (v - g.h / 2) * self.sy * self.jit
+        a, b = math.cos(math.radians(self.rot)), math.sin(math.radians(self.rot))
+        return cx + a * dx + b * dy, cy - b * dx + a * dy
 
     def draw(self, cv, x, y):
         if self.g is None:
@@ -496,14 +540,51 @@ def script_size(size):
     return max(0.45, size * (0.7 if size > 0.75 else 0.8))
 
 
+JOINABLE = set("abcdefghijklmnopqrstuvwxyz")
+
+
+class JoinedWord(HBox):
+    """A word whose lowercase letters are linked by connecting strokes."""
+
+    def __init__(self, ctx, items, size):
+        super().__init__(items)
+        self.ctx, self.size = ctx, size
+        self.sag = [ctx.rng.normal(0, 0.03 * ctx.m) * ctx.em * size for _ in self.items]
+
+    @staticmethod
+    def _joins(b):
+        return isinstance(b, GlyphBox) and b.g is not None and not b.g.fallback and b.ch in JOINABLE
+
+    def draw(self, cv, x, y):
+        ctx, em = self.ctx, self.ctx.em * self.size
+        prev = None
+        for i, b in enumerate(self.items):
+            b.draw(cv, x, y)
+            if prev is not None and self._joins(prev[0]) and self._joins(b):
+                pb, px = prev
+                xu, xv = ctx.profile.anchors(pb.g)[1]       # exit of the previous letter
+                eu, ev = ctx.profile.anchors(b.g)[0]        # entry of this one
+                p0 = pb.page_point(xu, xv, px, y)
+                p1 = b.page_point(eu, ev, x, y)
+                dx = p1[0] - p0[0]
+                if -0.3 * em < dx < 0.9 * em:
+                    ctrl = ((p0[0] + p1[0]) / 2, max(p0[1], p1[1]) + 0.04 * em + self.sag[i])
+                    pts = [((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * ctrl[0] + t * t * p1[0],
+                            (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * ctrl[1] + t * t * p1[1])
+                           for t in np.linspace(0, 1, 10)]
+                    cv.stroke(pts, ctx.stroke * 0.95, intensity=0.9)
+            prev = (b, x)
+            x += b.w
+
+
 def text_box(ctx, s, size, bold=False):
     items = []
     for ch in s:
         if ch == " ":
             items.append(Space(ctx.em * size * 0.4))
         else:
-            items.append(GlyphBox(ctx, ch, size, bold=bold))
-    return HBox(items)
+            items.append(GlyphBox(ctx, ch, size, bold=bold, joined=ctx.cursive and ch in JOINABLE))
+    return JoinedWord(ctx, items, size) if ctx.cursive else HBox(items)
 
 
 BIGOP_SCALE = {"∫": (1.9, 1.35), "∬": (1.9, 1.35), "∭": (1.9, 1.35), "∮": (1.9, 1.35)}
@@ -573,6 +654,8 @@ def build_math(ctx, node, size=1.0, display=False):
         return Boxed(ctx, build_math(ctx, node[1], size, display), size)
     if t == "phantom":
         return Phantom(build_math(ctx, node[1], size, display))
+    if t == "color":
+        return colored(build_math(ctx, node[2], size, display), node[1])
     if t == "newline":
         return Space(em * 0.5)
     return Space(0)

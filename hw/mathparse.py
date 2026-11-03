@@ -199,6 +199,10 @@ class MathParser:
                 continue
             atom = self.parse_scripts(atom)
             items.append(atom)
+        # \color{c} recolours everything after it in the same group
+        for k, n in enumerate(items):
+            if n[0] == "setcolor":
+                return ("row", items[:k] + [("color", n[1], ("row", items[k + 1:]))])
         return ("row", items)
 
     def parse_scripts(self, base):
@@ -261,9 +265,12 @@ class MathParser:
             if self.peek() == "}":
                 self.i += 1
             return r
-        if c in "}]&":
+        if c in "}&":
             self.i += 1
             return None
+        if c == "]":                     # e.g. the interval [0, 2\pi]
+            self.i += 1
+            return ("sym", "]")
         if c in "^_":
             return ("row", [])           # script with empty base; parse_scripts picks it up
         if c == "~":
@@ -320,10 +327,12 @@ class MathParser:
             if name == "fbox":
                 return ("boxed", ("text", self.read_raw_group()))
             return ("boxed", self.parse_arg())
-        if name in ("color",):
-            self.read_raw_group()
-            return None
-        if name in ("textcolor", "colorbox"):
+        if name == "color":
+            return ("setcolor", self.read_raw_group().strip())
+        if name == "textcolor":
+            c = self.read_raw_group().strip()
+            return ("color", c, self.parse_arg())
+        if name == "colorbox":
             self.read_raw_group()
             return self.parse_arg()
         if name in ("phantom", "hphantom", "vphantom"):

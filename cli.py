@@ -51,7 +51,10 @@ def main(argv=None):
     for k, v in vars(Options()).items():
         if k in ("page_w", "page_h"):
             continue
-        r.add_argument("--" + k.replace("_", "-"), type=type(v), default=v)
+        if isinstance(v, bool):
+            r.add_argument("--" + k.replace("_", "-"), action="store_true")
+        else:
+            r.add_argument("--" + k.replace("_", "-"), type=type(v), default=v)
 
     f = sub.add_parser("font")
     f.add_argument("name")

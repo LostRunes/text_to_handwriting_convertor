@@ -1,4 +1,7 @@
 output/
-profiles/
 __pycache__/
 *.pyc
+# hosted handwriting profiles are kept; anything else uploaded locally is not
+profiles/*
+!profiles/y1/
+!profiles/demo/
