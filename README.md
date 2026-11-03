@@ -16,8 +16,8 @@ LaTeX math, and get pages that look hand-written on ruled paper.
 ## Run
 
 ```
-git clone https://github.com/LostRunes/python-scripts.git
-cd python-scripts/handwriting_covertor
+git clone https://github.com/LostRunes/text_to_handwriting_convertor.git
+cd text_to_handwriting_convertor
 pip install -r requirements.txt
 python app.py            # open http://127.0.0.1:5000
 ```
